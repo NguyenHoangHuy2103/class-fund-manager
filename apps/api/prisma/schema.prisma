@@ -1,123 +1,573 @@
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider  = "postgresql"
+  url       = env("DATABASE_URL")
+  directUrl = env("DIRECT_URL")
 }
 
 generator client {
   provider = "prisma-client-js"
 }
 
-enum Role {
-  ADMIN
-  MEMBER
+// ----------------------------------------------------
+// ENUMS
+// ----------------------------------------------------
+
+enum GlobalRole {
+  SUPER_ADMIN
+  USER
+}
+
+enum ClassRole {
+  TREASURER // Thủ quỹ (duy nhất 1 người hoạt động tại 1 thời điểm trên mỗi lớp)
+  MEMBER    // Thành viên lớp
 }
 
 enum MemberStatus {
-  ACTIVE
-  INACTIVE
+  PENDING   // Chờ thủ quỹ duyệt vào lớp
+  ACTIVE    // Đang sinh hoạt
+  REJECTED  // Bị thủ quỹ từ chối (có thể gửi yêu cầu xin lại)
+  INACTIVE  // Tạm khóa / đã rời lớp
+}
+
+enum PeriodStatus {
+  OPEN      // Kỳ đang mở (tối đa 1 kỳ OPEN trên mỗi lớp)
+  CLOSED    // Kỳ đã đóng (khóa sổ, không thu, không sửa)
 }
 
 enum CollectionStatus {
-  OPEN
-  CLOSED
+  OPEN      // Đang trong hạn thu
+  CLOSED    // Đã chốt đợt thu
+}
+
+enum ObligationStatus {
+  UNPAID    // Chưa đóng đồng nào
+  PARTIAL   // Đóng một phần (vd: 50.000 / 100.000)
+  PAID      // Đã đóng đủ
+  EXEMPT    // Được miễn đóng hoàn toàn (targetAmount = 0, có lý do)
+}
+
+enum ProofStatus {
+  PENDING   // Thành viên đã gửi bill, chờ thủ quỹ duyệt
+  APPROVED  // Đã xác nhận hợp lệ
+  REJECTED  // Bị từ chối (có lý do)
+}
+
+enum FundType {
+  CASH      // Quỹ tiền mặt
+  BANK      // Quỹ tài khoản ngân hàng
 }
 
 enum TransactionType {
-  INCOME
-  EXPENSE
+  OPENING_BALANCE       // Số dư đầu kỳ (khi lập lớp hoặc kết chuyển sang)
+  COLLECTION_FEE        // Thu từ đợt đóng quỹ
+  OTHER_INCOME          // Thu ngoài (tài trợ, thưởng...)
+  EXPENSE               // Khoản chi tiêu của lớp
+  REFUND                // Hoàn tiền cho thành viên (liên kết bút toán gốc)
+  INTERNAL_TRANSFER_IN  // Vế nhập trong chuyển nội bộ CASH <-> BANK
+  INTERNAL_TRANSFER_OUT // Vế xuất trong chuyển nội bộ CASH <-> BANK
+  PERIOD_CARRY_OVER     // Bút toán kết chuyển khi đóng kỳ cũ
+  REVERSAL              // Bút toán đảo để hủy/sửa sai sót
 }
 
-model User {
-  id           String    @id @default(cuid())
-  email        String    @unique
-  passwordHash String
-  role         Role      @default(MEMBER)
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+enum FileCategory {
+  PAYMENT_PROOF         // Bill chuyển khoản (riêng tư: chỉ người nộp + thủ quỹ xem)
+  EXPENSE_INVOICE       // Hóa đơn chứng từ chi (công khai cho cả lớp xem)
+}
 
-  member            Member?
-  collections       Collection[]  @relation("CreatedCollections")
-  confirmedPayments Payment[]     @relation("ConfirmedPayments")
-  transactions      Transaction[] @relation("CreatedTransactions")
+enum EmailStatus {
+  PENDING
+  PROCESSING
+  SENT
+  FAILED
+}
+
+// ----------------------------------------------------
+// MODELS
+// ----------------------------------------------------
+
+// 1. Tài khoản người dùng toàn hệ thống
+model User {
+  id                        String        @id @default(cuid())
+  email                     String        @unique
+  passwordHash              String?
+  fullName                  String
+  phone                     String?
+  avatarUrl                 String?
+  globalRole                GlobalRole    @default(USER)
+  isEmailVerified           Boolean       @default(false)
+  emailVerifyTokenHash      String?
+  emailVerifyExpiresAt      DateTime?
+  passwordResetTokenHash    String?
+  passwordResetExpiresAt    DateTime?
+  googleId                  String?       @unique
+  isLocked                  Boolean       @default(false)
+  createdAt                 DateTime      @default(now())
+  updatedAt                 DateTime      @updatedAt
+
+  // Ràng buộc: Mỗi user chỉ được tạo tối đa 1 lớp (độc lập với việc làm thủ quỹ hay không)
+  createdClass          Class?        @relation("ClassCreator")
+  
+  memberships           ClassMember[]
+  sessions              UserSession[]
+  notifications         Notification[]
+  auditLogs             AuditLog[]    @relation("ActorAuditLogs")
+  uploadedFiles         FileMetadata[]
 
   @@index([email])
 }
 
-model Member {
-  id        String       @id @default(cuid())
-  code      String       @unique
-  name      String
-  email     String       @unique
-  phone     String?
-  status    MemberStatus @default(ACTIVE)
-  userId    String?      @unique
-  user      User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
-  createdAt DateTime     @default(now())
-  updatedAt DateTime     @updatedAt
+// 2. Phiên đăng nhập (Session cookie / Refresh token bảo mật)
+model UserSession {
+  id               String    @id @default(cuid())
+  userId           String
+  refreshTokenHash String    @unique
+  userAgent        String?
+  ipAddress        String?
+  expiresAt        DateTime
+  isRevoked        Boolean   @default(false)
+  createdAt        DateTime  @default(now())
 
-  payments Payment[]
+  user             User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@index([status])
-  @@index([code])
+  @@index([userId])
 }
 
+// 3. Lớp học
+model Class {
+  id                String         @id @default(cuid())
+  code              String         @unique // Mã lớp: vd "CNTT-K15"
+  name              String         // Tên lớp
+  inviteCode        String         @unique // Mã mời 6-8 ký tự ngẫu nhiên
+  isInviteActive    Boolean        @default(true)
+  
+  // Người tạo lớp (1 user chỉ tạo 1 class)
+  createdById       String         @unique
+  createdBy         User           @relation("ClassCreator", fields: [createdById], references: [id], onDelete: Restrict)
+  
+  // Cấu hình tài khoản ngân hàng nhận tiền
+  bankBin           String?        // Mã định danh ngân hàng (VD: 970422 - MBBank)
+  bankName          String?        // Tên ngân hàng
+  bankAccountNo     String?        // Số tài khoản
+  bankAccountHolder String?        // Tên chủ tài khoản (in hoa không dấu)
+  
+  // Chống lạm dụng & gian lận
+  createdIp         String?
+  createdDeviceHash String?
+  isFlaggedDuplicate Boolean       @default(false)
+  isLocked          Boolean        @default(false)
+  
+  createdAt         DateTime       @default(now())
+  updatedAt         DateTime       @updatedAt
+
+  members           ClassMember[]
+  periods           Period[]
+  transactions      Transaction[]
+  collections       Collection[]
+  polls             Poll[]
+  auditLogs         AuditLog[]
+  files             FileMetadata[]
+
+  @@index([code])
+  @@index([inviteCode])
+}
+
+// 4. Thành viên trong lớp (Membership: User - Class - Role)
+model ClassMember {
+  id            String              @id @default(cuid())
+  classId       String
+  userId        String
+  memberCode    String?             // Mã số sinh viên / số thứ tự
+  displayName   String              // Họ tên hiển thị trong danh sách lớp
+  role          ClassRole           @default(MEMBER)
+  status        MemberStatus        @default(PENDING)
+  joinedAt      DateTime            @default(now())
+  updatedAt     DateTime            @updatedAt
+
+  class         Class               @relation(fields: [classId], references: [id], onDelete: Restrict)
+  user          User                @relation(fields: [userId], references: [id], onDelete: Restrict)
+  
+  obligations   CollectionMember[]
+  submittedProofs PaymentProof[]    @relation("MemberSubmittedProofs")
+  reviewedProofs  PaymentProof[]    @relation("TreasurerReviewedProofs")
+  payments        Payment[]         @relation("MemberPayments")
+  receivedPayments Payment[]        @relation("TreasurerReceivedPayments")
+  comments        Comment[]
+  pollVotes       PollVote[]
+  notificationPref MemberNotificationPref?
+
+  @@unique([classId, userId])
+  @@unique([classId, memberCode]) // Mã sinh viên không trùng trong cùng 1 lớp
+  @@index([classId, role])
+  @@index([classId, status])
+}
+
+// 5. Cài đặt thông báo của thành viên
+model MemberNotificationPref {
+  id                 String       @id @default(cuid())
+  classMemberId      String       @unique
+  receiveCollectionEmail Boolean  @default(true)
+  receiveReminderEmail   Boolean  @default(true)
+  // Lưu ý: email đổi ngân hàng và thông báo tài chính là bắt buộc, không có cấu hình tắt
+
+  classMember        ClassMember  @relation(fields: [classMemberId], references: [id], onDelete: Cascade)
+}
+
+// 6. Kỳ hoạt động (Học kỳ / Năm học)
+model Period {
+  id            String         @id @default(cuid())
+  classId       String
+  name          String         // Ví dụ: "Học kỳ 1 (2026 - 2027)"
+  startDate     DateTime
+  endDate       DateTime?
+  status        PeriodStatus   @default(OPEN)
+  
+  // Snapshot số dư đầu kỳ (Lưu bằng BigInt VND; tính từ Transaction OPENING_BALANCE tương ứng)
+  openingCash   BigInt         @default(0)
+  openingBank   BigInt         @default(0)
+  
+  // Snapshot số dư chốt cuối kỳ (ghi nhận khi CLOSED để đối soát, SSOT vẫn từ Ledger)
+  closingCash   BigInt?
+  closingBank   BigInt?
+  closedAt      DateTime?
+  closedById    String?
+
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  class         Class          @relation(fields: [classId], references: [id], onDelete: Restrict)
+  collections   Collection[]
+  transactions  Transaction[]
+
+  @@index([classId, status])
+}
+
+// 7. Đợt thu quỹ
 model Collection {
-  id          String           @id @default(cuid())
-  name        String
-  description String?
-  amount      Int              // Số tiền VND (số nguyên dương)
-  dueDate     DateTime?
-  status      CollectionStatus @default(OPEN)
-  createdById String
-  createdBy   User             @relation("CreatedCollections", fields: [createdById], references: [id])
-  createdAt   DateTime         @default(now())
-  updatedAt   DateTime         @updatedAt
+  id            String             @id @default(cuid())
+  classId       String
+  periodId      String
+  name          String             // Ví dụ: "Quỹ hoạt động Tháng 10"
+  defaultAmount BigInt             // Mức thu chuẩn mỗi bạn (VND số nguyên dương)
+  dueDate       DateTime?          // Hạn đóng
+  description   String?            @db.Text
+  status        CollectionStatus   @default(OPEN)
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
 
-  payments Payment[]
+  class         Class              @relation(fields: [classId], references: [id], onDelete: Restrict)
+  period        Period             @relation(fields: [periodId], references: [id], onDelete: Restrict)
+  
+  members       CollectionMember[]
+  paymentProofs PaymentProof[]
+  payments      Payment[]
+  comments      Comment[]
+  polls         Poll[]
+
+  @@index([classId, periodId])
+  @@index([periodId, status])
+}
+
+// 8. Nghĩa vụ đóng tiền của từng thành viên trong đợt thu
+model CollectionMember {
+  id            String             @id @default(cuid())
+  collectionId  String
+  classMemberId String
+  
+  // Số tiền phải nộp (mặc định = defaultAmount, có thể sửa khi miễn giảm)
+  targetAmount  BigInt
+  // Cache số tiền đã thanh toán (SSOT là tổng các Payment liên kết)
+  paidAmount    BigInt             @default(0)
+  status        ObligationStatus   @default(UNPAID)
+  
+  discountReason String?           // Bắt buộc nếu targetAmount < defaultAmount
+  adjustedById   String?
+  adjustedAt     DateTime?
+  
+  // Liên kết nguồn nếu là nghĩa vụ nợ chuyển tiếp từ kỳ trước
+  sourceObligationId String?       @unique // Mỗi nghĩa vụ cũ chỉ chuyển nợ đúng 1 lần sang kỳ mới
+  sourceObligation   CollectionMember? @relation("DebtForwardChain", fields: [sourceObligationId], references: [id], onDelete: Restrict)
+  forwardedTo        CollectionMember? @relation("DebtForwardChain")
+
+  updatedAt     DateTime           @updatedAt
+
+  collection    Collection         @relation(fields: [collectionId], references: [id], onDelete: Restrict)
+  classMember   ClassMember        @relation(fields: [classMemberId], references: [id], onDelete: Restrict)
+  payments      Payment[]
+
+  @@unique([collectionId, classMemberId])
+  @@index([collectionId, status])
+  @@index([classMemberId])
+}
+
+// 9. Bằng chứng chuyển khoản (Ảnh chụp màn hình / Bill do thành viên tải lên)
+model PaymentProof {
+  id            String             @id @default(cuid())
+  collectionId  String
+  classMemberId String
+  amount        BigInt             // Số tiền thành viên khai báo đã chuyển (VND)
+  fileId        String             // Khóa ngoại trỏ đến metadata file
+  transferCode  String?            // Nội dung ck / Mã giao dịch ngân hàng
+  note          String?            @db.Text
+  status        ProofStatus        @default(PENDING)
+  
+  reviewedById  String?
+  reviewedAt    DateTime?
+  rejectReason  String?            // Bắt buộc nếu REJECTED
+  
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+
+  collection    Collection         @relation(fields: [collectionId], references: [id], onDelete: Restrict)
+  classMember   ClassMember        @relation("MemberSubmittedProofs", fields: [classMemberId], references: [id], onDelete: Restrict)
+  reviewedBy    ClassMember?       @relation("TreasurerReviewedProofs", fields: [reviewedById], references: [id], onDelete: Restrict)
+  file          FileMetadata       @relation(fields: [fileId], references: [id], onDelete: Restrict)
+  
+  // Khi duyệt bill thành công: Tạo đúng 1 Payment duy nhất
+  payment       Payment?
+
+  // Snapshot thông tin tài khoản ngân hàng của lớp tại thời điểm nộp bill
+  bankSnapshot  Json?
+
+  // Chống gửi trùng & bảo đảm Idempotency
+  idempotencyKey String?            @unique
+  requestHash    String?
+
+  @@index([collectionId, status])
+  @@index([classMemberId, status])
+}
+
+// 10. Khoản đóng đã ghi nhận (Thực thể trung tâm: Tiền mặt hoặc Chuyển khoản)
+model Payment {
+  id                 String             @id @default(cuid())
+  collectionId       String
+  classMemberId      String
+  obligationId       String
+  
+  amount             BigInt             // Số tiền THỰC NHẬN (VND)
+  fundType           FundType           // CASH (tiền mặt) hoặc BANK (ngân hàng)
+  paidAt             DateTime           @default(now()) // Ngày giờ thanh toán thực tế
+  note               String?
+  
+  // Ai là người thu / duyệt tiền
+  recordedById       String
+  recordedBy         ClassMember        @relation("TreasurerReceivedPayments", fields: [recordedById], references: [id], onDelete: Restrict)
+  
+  // Nếu là chuyển khoản: Gắn với PaymentProof (đúng 1-1, chống duyệt trùng)
+  paymentProofId     String?            @unique
+  paymentProof       PaymentProof?      @relation(fields: [paymentProofId], references: [id], onDelete: Restrict)
+  
+  // Bút toán ledger tương ứng sinh ra trên sổ quỹ (1-1)
+  transactionId      String             @unique
+  transaction        Transaction        @relation("PaymentTransaction", fields: [transactionId], references: [id], onDelete: Restrict)
+
+  // Chống ghi nhận tiền mặt trùng & bảo đảm Idempotency
+  idempotencyKey     String?            @unique
+  requestHash        String?
+
+  createdAt          DateTime           @default(now())
+  updatedAt          DateTime           @updatedAt
+
+  collection         Collection         @relation(fields: [collectionId], references: [id], onDelete: Restrict)
+  classMember        ClassMember        @relation("MemberPayments", fields: [classMemberId], references: [id], onDelete: Restrict)
+  obligation         CollectionMember   @relation(fields: [obligationId], references: [id], onDelete: Restrict)
+  
+  // Bút toán hoàn tiền liên kết (nếu nộp dư hoặc hoàn trả)
+  refunds            Transaction[]      @relation("RefundOriginalPayment")
+
+  @@index([collectionId])
+  @@index([classMemberId])
+  @@index([obligationId])
+}
+
+// 11. Sổ cái giao dịch quỹ lớp (Ledger - Nguồn sự thật duy nhất SSOT)
+model Transaction {
+  id                   String           @id @default(cuid())
+  classId              String
+  periodId             String
+  code                 String           // Mã phiếu thu/chi/chuyển: vd "THU-0001", "CHI-0001"
+  date                 DateTime         // Ngày phát sinh nghiệp vụ thực tế
+  type                 TransactionType
+  fundType             FundType         // CASH hoặc BANK
+  amount               BigInt           // Luôn là số nguyên dương VND
+  category             String           // Danh mục: "Quỹ tháng 10", "In ấn tài liệu", "Liên hoan"...
+  description          String           @db.Text
+  counterparty         String?          // Người nộp / người nhận / đơn vị bán hàng
+  
+  // Nếu là chuyển nội bộ: Liên kết 2 vế xuất-nhập qua mã nhóm chung
+  transferGroupId      String?
+  
+  // Nếu là hoàn tiền: Liên kết khoản thanh toán gốc và bút toán gốc
+  originalPaymentId    String?
+  originalPayment      Payment?         @relation("RefundOriginalPayment", fields: [originalPaymentId], references: [id], onDelete: Restrict)
+  originalTransactionId String?
+  originalTransaction  Transaction?     @relation("RefundOriginalTransaction", fields: [originalTransactionId], references: [id], onDelete: Restrict)
+  refundTransactions   Transaction[]    @relation("RefundOriginalTransaction")
+
+  // Nếu là hủy / đảo sai sót:
+  reversalOfId         String?          @unique
+  reversalOf           Transaction?     @relation("TransactionReversal", fields: [reversalOfId], references: [id], onDelete: Restrict)
+  reversedBy           Transaction?     @relation("TransactionReversal")
+  adjustmentReason     String?          // Bắt buộc nếu hủy / đảo bút toán
+  
+  // Liên kết 1-1 với Payment (nếu là giao dịch thu từ đóng quỹ)
+  payment              Payment?         @relation("PaymentTransaction")
+
+  // Liên kết chứng từ hóa đơn chi
+  invoiceFiles         FileMetadata[]   @relation("TransactionInvoiceFiles")
+
+  createdAt            DateTime         @default(now()) // Thời điểm ghi bản ghi vào hệ thống
+  updatedAt            DateTime         @updatedAt
+
+  class                Class            @relation(fields: [classId], references: [id], onDelete: Restrict)
+  period               Period           @relation(fields: [periodId], references: [id], onDelete: Restrict)
+
+  @@unique([classId, code])
+  @@index([classId, periodId])
+  @@index([classId, fundType])
+  @@index([classId, type])
+  @@index([classId, date])
+  @@index([transferGroupId])
+}
+
+// 12. Quản lý chứng từ / File Storage (Không lưu signed URL tạm thời vào DB)
+model FileMetadata {
+  id              String         @id @default(cuid())
+  classId         String
+  storageKey      String         @unique // Đường dẫn lưu trữ private: "classes/{classId}/proofs/{id}.webp"
+  originalName    String
+  mimeType        String
+  sizeBytes       Int
+  category        FileCategory
+  uploadedById    String
+  createdAt       DateTime       @default(now())
+
+  class           Class          @relation(fields: [classId], references: [id], onDelete: Restrict)
+  uploadedBy      User           @relation(fields: [uploadedById], references: [id], onDelete: Restrict)
+  
+  paymentProofs   PaymentProof[]
+  invoiceTransactions Transaction[] @relation("TransactionInvoiceFiles")
+
+  @@index([classId, category])
+}
+
+// 13. Nhật ký kiểm toán (Audit Trail)
+model AuditLog {
+  id          String         @id @default(cuid())
+  classId     String?
+  actorId     String         // User ID người thực hiện
+  action      String         // CREATE, UPDATE, DELETE, APPROVE, REJECT, CLOSE_PERIOD, TRANSFER_TREASURER
+  targetType  String         // TRANSACTION, COLLECTION, CLASS, MEMBER, BANK_CONFIG, PAYMENT
+  targetId    String
+  oldValues   Json?          // Trạng thái cũ
+  newValues   Json?          // Trạng thái mới
+  reason      String?        // Bắt buộc cho các thao tác sửa đổi nhạy cảm
+  ipAddress   String?
+  userAgent   String?
+  createdAt   DateTime       @default(now())
+
+  class       Class?         @relation(fields: [classId], references: [id], onDelete: Restrict)
+  actor       User           @relation("ActorAuditLogs", fields: [actorId], references: [id], onDelete: Restrict)
+
+  @@index([classId, targetType, targetId])
+  @@index([actorId])
+}
+
+// 14. Bình luận / Thảo luận (Hỗ trợ phân cấp thụt lề UI tối đa 3 cấp)
+model Comment {
+  id            String         @id @default(cuid())
+  collectionId  String
+  classMemberId String
+  parentId      String?        // Tự tham chiếu để tạo phân cấp trả lời
+  content       String         @db.Text
+  isDeleted     Boolean        @default(false) // Xóa mềm: "Bình luận đã bị xóa"
+  isHidden      Boolean        @default(false) // Thủ quỹ ẩn bình luận vi phạm
+  hiddenReason  String?
+  hiddenById    String?
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  collection    Collection     @relation(fields: [collectionId], references: [id], onDelete: Restrict)
+  author        ClassMember    @relation(fields: [classMemberId], references: [id], onDelete: Restrict)
+  parent        Comment?       @relation("CommentHierarchy", fields: [parentId], references: [id], onDelete: Restrict)
+  replies       Comment[]      @relation("CommentHierarchy")
+
+  @@index([collectionId, parentId])
+}
+
+// 15. Khảo sát / Biểu quyết (Poll)
+model Poll {
+  id            String         @id @default(cuid())
+  classId       String
+  collectionId  String?        // Gắn với đợt thu hoặc chung cho lớp
+  question      String         @db.Text
+  deadline      DateTime?
+  isClosed      Boolean        @default(false)
+  isAnonymous   Boolean        @default(false)
+  allowMultiple Boolean        @default(false) // Một hay nhiều đáp án
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+
+  class         Class          @relation(fields: [classId], references: [id], onDelete: Restrict)
+  collection    Collection?    @relation(fields: [collectionId], references: [id], onDelete: Restrict)
+  options       PollOption[]
+  votes         PollVote[]
+
+  @@index([classId])
+}
+
+model PollOption {
+  id          String         @id @default(cuid())
+  pollId      String
+  text        String
+  
+  poll        Poll           @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  votes       PollVote[]
+}
+
+model PollVote {
+  id            String         @id @default(cuid())
+  pollId        String
+  optionId      String
+  classMemberId String
+  createdAt     DateTime       @default(now())
+
+  poll          Poll           @relation(fields: [pollId], references: [id], onDelete: Cascade)
+  option        PollOption     @relation(fields: [optionId], references: [id], onDelete: Cascade)
+  voter         ClassMember    @relation(fields: [classMemberId], references: [id], onDelete: Restrict)
+
+  // Ràng buộc: Mỗi thành viên chỉ bỏ 1 phiếu cho 1 option; nếu single-choice, service chặn không cho vote > 1 option
+  @@unique([optionId, classMemberId], map: "unique_poll_option_member_vote")
+  @@index([pollId, classMemberId])
+}
+
+// 16. Thông báo trong web (In-App Notification)
+model Notification {
+  id          String         @id @default(cuid())
+  userId      String
+  title       String
+  message     String         @db.Text
+  link        String?        // Đường dẫn mở tab/modal tương ứng
+  isRead      Boolean        @default(false)
+  createdAt   DateTime       @default(now())
+
+  user        User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, isRead])
+}
+
+// 17. Hàng đợi Email (Email Outbox Pattern - Chống gửi trùng)
+model EmailOutbox {
+  id             String         @id @default(cuid())
+  idempotencyKey String         @unique // Khóa chống gửi trùng (vd: "NEW_COLLECTION_colId_userId")
+  toEmail        String
+  subject        String
+  htmlContent    String         @db.Text
+  status         EmailStatus    @default(PENDING)
+  retryCount     Int            @default(0)
+  maxRetries     Int            @default(3)
+  lastError      String?        @db.Text
+  sentAt         DateTime?
+  createdAt      DateTime       @default(now())
 
   @@index([status])
-}
-
-model Payment {
-  id            String      @id @default(cuid())
-  collectionId  String
-  collection    Collection  @relation(fields: [collectionId], references: [id], onDelete: Restrict)
-  memberId      String
-  member        Member      @relation(fields: [memberId], references: [id], onDelete: Restrict)
-  amount        Int         // Số tiền VND (bằng số tiền đợt thu)
-  paidAt        DateTime    @default(now())
-  note          String?
-  confirmedById String
-  confirmedBy   User        @relation("ConfirmedPayments", fields: [confirmedById], references: [id])
-  transactionId String      @unique
-  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-
-  // Chống xác nhận trùng: mỗi thành viên chỉ có 1 payment cho 1 đợt thu
-  @@unique([collectionId, memberId])
-  @@index([memberId])
-  @@index([collectionId])
-}
-
-model Transaction {
-  id           String          @id @default(cuid())
-  code         String          @unique // Ví dụ: GD-0001
-  type         TransactionType
-  category     String
-  amount       Int             // Số tiền VND dương
-  date         DateTime        // Thời điểm phát sinh giao dịch thực tế
-  description  String
-  counterparty String          // Người nộp / đơn vị nhận
-  note         String?
-  createdById  String
-  createdBy    User            @relation("CreatedTransactions", fields: [createdById], references: [id])
-  createdAt    DateTime        @default(now()) // Thời điểm tạo bản ghi hệ thống
-  updatedAt    DateTime        @updatedAt
-
-  payment Payment?
-
-  @@index([type])
-  @@index([date])
-  @@index([code])
 }
