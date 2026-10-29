@@ -1,16 +1,22 @@
 import bcrypt from "bcryptjs"
 import jwt from "jsonwebtoken"
+import crypto from "crypto"
 import type { Response, CookieOptions } from "express"
 import { env } from "../config/env.js"
-import type { Role } from "@prisma/client"
+import type { GlobalRole, ClassRole } from "@prisma/client"
 
-export const TOKEN_COOKIE_NAME = "class_fund_token"
+export const ACCESS_COOKIE_NAME = "cf_access_token"
+export const REFRESH_COOKIE_NAME = "cf_refresh_token"
+export const CSRF_COOKIE_NAME = "cf_csrf_token"
 
 export interface JwtPayload {
   userId: string
   email: string
-  role: Role
+  globalRole: GlobalRole
+  classId?: string
+  classRole?: ClassRole
   memberId?: string
+  sessionId: string
 }
 
 export async function hashPassword(plain: string): Promise<string> {
@@ -25,33 +31,104 @@ export async function comparePassword(
   return bcrypt.compare(plain, hash)
 }
 
-export function generateToken(payload: JwtPayload): string {
+export function hashToken(rawToken: string): string {
+  return crypto.createHash("sha256").update(rawToken).digest("hex")
+}
+
+export function generateRandomToken(): string {
+  return crypto.randomBytes(32).toString("hex")
+}
+
+export function generateCsrfToken(sessionId: string): string {
+  const random = crypto.randomBytes(24).toString("hex")
+  const data = `${sessionId}:${random}`
+  const signature = crypto
+    .createHmac("sha256", env.JWT_SECRET)
+    .update(data)
+    .digest("hex")
+  return `${sessionId}.${random}.${signature}`
+}
+
+export function verifyCsrfToken(
+  csrfToken: string,
+  expectedSessionId?: string,
+): boolean {
+  if (!csrfToken || typeof csrfToken !== "string") return false
+  const parts = csrfToken.split(".")
+  if (parts.length !== 3) return false
+  const [tokenSessionId, random, sig] = parts
+
+  // 1. Nếu request đã được xác thực (có expectedSessionId), CSRF token BẮT BUỘC phải sinh cho đúng session đó
+  if (expectedSessionId && tokenSessionId !== expectedSessionId) {
+    return false
+  }
+
+  // 2. Kiểm tra chữ ký HMAC
+  const data = `${tokenSessionId}:${random}`
+  const expectedSig = crypto
+    .createHmac("sha256", env.JWT_SECRET)
+    .update(data)
+    .digest("hex")
+
+  try {
+    return crypto.timingSafeEqual(
+      Buffer.from(sig, "hex"),
+      Buffer.from(expectedSig, "hex"),
+    )
+  } catch {
+    return false
+  }
+}
+
+export function generateAccessToken(payload: JwtPayload): string {
   return jwt.sign(payload, env.JWT_SECRET, {
-    expiresIn: env.JWT_EXPIRES_IN as jwt.SignOptions["expiresIn"],
+    expiresIn: "15m", // Phiên ngắn 15 phút, tự làm mới qua refresh token
   })
 }
 
-export function verifyToken(token: string): JwtPayload {
+export function verifyAccessToken(token: string): JwtPayload {
   return jwt.verify(token, env.JWT_SECRET) as JwtPayload
 }
 
-export const authCookieOptions: CookieOptions = {
+export const accessCookieOptions: CookieOptions = {
+  httpOnly: true,
+  secure: env.NODE_ENV === "production",
+  sameSite: "lax",
+  maxAge: 15 * 60 * 1000, // 15 phút
+  path: "/",
+}
+
+export const refreshCookieOptions: CookieOptions = {
   httpOnly: true,
   secure: env.NODE_ENV === "production",
   sameSite: "lax",
   maxAge: 7 * 24 * 60 * 60 * 1000, // 7 ngày
+  path: "/api/auth",
+}
+
+export const csrfCookieOptions: CookieOptions = {
+  httpOnly: false, // Client đọc được để gửi trong header x-csrf-token
+  secure: env.NODE_ENV === "production",
+  sameSite: "lax",
+  maxAge: 7 * 24 * 60 * 60 * 1000,
   path: "/",
 }
 
-export function setAuthCookie(res: Response, token: string): void {
-  res.cookie(TOKEN_COOKIE_NAME, token, authCookieOptions)
+export function setSessionCookies(
+  res: Response,
+  accessToken: string,
+  refreshToken: string,
+  csrfToken?: string,
+): void {
+  res.cookie(ACCESS_COOKIE_NAME, accessToken, accessCookieOptions)
+  res.cookie(REFRESH_COOKIE_NAME, refreshToken, refreshCookieOptions)
+  if (csrfToken) {
+    res.cookie(CSRF_COOKIE_NAME, csrfToken, csrfCookieOptions)
+  }
 }
 
-export function clearAuthCookie(res: Response): void {
-  res.clearCookie(TOKEN_COOKIE_NAME, {
-    httpOnly: true,
-    secure: env.NODE_ENV === "production",
-    sameSite: "lax",
-    path: "/",
-  })
+export function clearSessionCookies(res: Response): void {
+  res.clearCookie(ACCESS_COOKIE_NAME, { ...accessCookieOptions, maxAge: 0 })
+  res.clearCookie(REFRESH_COOKIE_NAME, { ...refreshCookieOptions, maxAge: 0 })
+  res.clearCookie(CSRF_COOKIE_NAME, { ...csrfCookieOptions, maxAge: 0 })
 }
