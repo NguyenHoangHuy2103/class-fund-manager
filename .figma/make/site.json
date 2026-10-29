@@ -1,5 +1,9 @@
 {
+  "title": "Class fund manager",
   "description": "Manage class funds with intuitive roles for admins, treasurers, and members featuring transparent tracking, payment confirmations, and detailed reports.",
+  "icons": {
+    "icon": "/favicon.svg"
+  },
   "robots": {
     "index": false
   },
