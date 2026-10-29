@@ -1,0 +1,89 @@
+@import url('https://fonts.googleapis.com/css2?family=Be+Vietnam+Pro:wght@400;500;600;700;800&display=swap');
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Be Vietnam Pro', ui-sans-serif, system-ui, sans-serif;
+  --color-ink: #0c161d;
+  --color-deep: #2a3862;
+  --color-brand: #4f7ee1;
+  --color-brand-ink: #2f5bbd;
+  --color-sky: #8bbcf2;
+  --color-mist: #cee6fb;
+  --color-canvas: #f5f8fe;
+  --color-tint: #eaf2fd;
+  --color-line: #e0e8f5;
+  --color-subtle: #566579;
+  --color-ok: #0e7a46;
+  --color-ok-bg: #e4f6ec;
+  --color-warn: #a84d06;
+  --color-warn-bg: #fef0da;
+  --color-bad: #c42b2b;
+  --color-bad-bg: #fde8e8;
+  --shadow-card: 0 1px 2px rgba(12, 22, 29, 0.04), 0 4px 16px rgba(42, 56, 98, 0.06);
+  --shadow-pop: 0 12px 40px rgba(12, 22, 29, 0.18);
+}
+
+html,
+body,
+#root {
+  min-height: 100%;
+}
+body {
+  font-family: var(--font-sans);
+  background: #f5f8fe;
+  color: #0c161d;
+  -webkit-font-smoothing: antialiased;
+}
+:focus-visible {
+  outline: 2px solid #4f7ee1;
+  outline-offset: 2px;
+}
+::selection {
+  background: #cee6fb;
+}
+.bg-hero {
+  background-image: linear-gradient(45deg, #0c161d, #2a3862, #4f7ee1, #8bbcf2, #cee6fb);
+}
+.tnum {
+  font-variant-numeric: tabular-nums;
+}
+* {
+  scrollbar-width: thin;
+  scrollbar-color: transparent transparent;
+}
+*:hover {
+  scrollbar-color: #c3d3ee transparent;
+}
+
+@keyframes fade-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+@keyframes pop-in {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes sheet-in {
+  from { opacity: 0; transform: translateY(24px); }
+  to { opacity: 1; transform: none; }
+}
+@keyframes slide-in {
+  from { transform: translateX(24px); opacity: 0; }
+  to { transform: none; opacity: 1; }
+}
+@keyframes shimmer {
+  to { background-position: -200% 0; }
+}
+.anim-fade { animation: fade-in 180ms ease-out; }
+.anim-pop { animation: pop-in 200ms ease-out; }
+.anim-sheet { animation: sheet-in 220ms ease-out; }
+.anim-slide { animation: slide-in 220ms ease-out; }
+.skeleton {
+  background: linear-gradient(90deg, #e8eefa 25%, #f4f7fd 50%, #e8eefa 75%);
+  background-size: 200% 100%;
+  animation: shimmer 1.4s linear infinite;
+  border-radius: 10px;
+}
+@media (prefers-reduced-motion: reduce) {
+  .anim-fade, .anim-pop, .anim-sheet, .anim-slide, .skeleton { animation: none; }
+}
