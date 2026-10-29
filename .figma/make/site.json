@@ -1,0 +1,10 @@
+{
+  "description": "Manage class funds with intuitive roles for admins, treasurers, and members featuring transparent tracking, payment confirmations, and detailed reports.",
+  "robots": {
+    "index": false
+  },
+  "accessibility": {
+    "addBypassLinks": false,
+    "ignoreReducedMotion": false
+  }
+}
