@@ -1,105 +1,81 @@
 import { describe, it, expect } from "vitest"
-import { createCollectionSchema } from "../src/modules/collections/collections.schema.js"
-import {
-  createExpenseSchema,
-  createManualIncomeSchema,
-} from "../src/modules/transactions/transactions.schema.js"
-import { createMemberSchema } from "../src/modules/members/members.schema.js"
+import { registerSchema } from "../src/modules/auth/auth.schema.js"
+import { createClassSchema, joinClassSchema } from "../src/modules/classes/classes.schema.js"
+import { listMembersQuerySchema } from "../src/modules/members/members.schema.js"
 
-describe("Quy tắc xác thực dữ liệu đầu vào (Zod Validation)", () => {
-  describe("Xác thực số tiền VND", () => {
-    it("Chấp nhận số tiền nguyên dương hợp lệ", () => {
-      const validCollection = createCollectionSchema.safeParse({
-        name: "Quỹ lớp tháng 10",
-        amount: 150000,
+describe("Quy tắc xác thực dữ liệu đầu vào GĐ1 (Zod Validation)", () => {
+  describe("Xác thực Đăng ký & Đăng nhập", () => {
+    it("Chấp nhận tài khoản hợp lệ", () => {
+      const valid = registerSchema.safeParse({
+        email: "student@school.edu.vn",
+        password: "StrongPassword@123",
+        fullName: "Nguyễn Văn A",
       })
-      expect(validCollection.success).toBe(true)
+      expect(valid.success).toBe(true)
     })
 
-    it("Từ chối số tiền âm", () => {
-      const invalidCollection = createCollectionSchema.safeParse({
-        name: "Quỹ lớp tháng 10",
-        amount: -50000,
+    it("Từ chối email sai định dạng", () => {
+      const invalid = registerSchema.safeParse({
+        email: "invalid-email-format",
+        password: "Pass",
+        fullName: "A",
       })
-      expect(invalidCollection.success).toBe(false)
-      if (!invalidCollection.success) {
-        expect(invalidCollection.error.errors[0].message).toContain(
-          "phải lớn hơn 0",
-        )
-      }
+      expect(invalid.success).toBe(false)
     })
 
-    it("Từ chối số tiền bằng 0", () => {
-      const invalidExpense = createExpenseSchema.safeParse({
-        category: "Hoạt động",
-        amount: 0,
-        description: "Mua nước ngọt",
-        counterparty: "Cửa hàng tạp hóa",
+    it("Từ chối mật khẩu quá ngắn", () => {
+      const invalid = registerSchema.safeParse({
+        email: "test@domain.com",
+        password: "123",
+        fullName: "Nguyễn Văn A",
       })
-      expect(invalidExpense.success).toBe(false)
-      if (!invalidExpense.success) {
-        expect(invalidExpense.error.errors[0].message).toContain(
-          "phải lớn hơn 0",
-        )
-      }
-    })
-
-    it("Từ chối số tiền thập phân (float)", () => {
-      const floatExpense = createExpenseSchema.safeParse({
-        category: "Hoạt động",
-        amount: 100000.5,
-        description: "Mua văn phòng phẩm",
-        counterparty: "Nhà sách",
-      })
-      expect(floatExpense.success).toBe(false)
-      if (!floatExpense.success) {
-        expect(floatExpense.error.errors[0].message).toContain(
-          "phải là số nguyên (VND)",
-        )
-      }
-    })
-
-    it("Từ chối số tiền vượt quá giới hạn tối đa", () => {
-      const excessIncome = createManualIncomeSchema.safeParse({
-        category: "Tài trợ",
-        amount: 999_999_999, // Vượt quá 100tr
-        description: "Tài trợ khủng",
-        counterparty: "Doanh nghiệp",
-      })
-      expect(excessIncome.success).toBe(false)
+      expect(invalid.success).toBe(false)
     })
   })
 
-  describe("Xác thực thông tin thành viên", () => {
-    it("Từ chối email sai định dạng", () => {
-      const result = createMemberSchema.safeParse({
-        code: "SE190299",
-        name: "Nguyễn Văn A",
-        email: "email-khong-hop-le",
+  describe("Xác thực Tạo lớp & Tham gia lớp", () => {
+    it("Chấp nhận thông tin tạo lớp hợp lệ", () => {
+      const valid = createClassSchema.safeParse({
+        code: "CNTT_K15",
+        name: "Lớp Công Nghệ Thông Tin K15",
+        memberCode: "MSSV12345",
+        displayName: "Trần Bảo Ngọc",
       })
-      expect(result.success).toBe(false)
+      expect(valid.success).toBe(true)
     })
 
-    it("Tự động viết hoa mã thành viên (code)", () => {
-      const result = createMemberSchema.safeParse({
-        code: "se190299",
-        name: "Nguyễn Văn A",
-        email: "a.nv@lopse1902.edu.vn",
+    it("Từ chối mã lớp chứa ký tự đặc biệt không hợp lệ", () => {
+      const invalid = createClassSchema.safeParse({
+        code: "CNTT K15@#$",
+        name: "Lớp CNTT",
+        memberCode: "MSSV1",
+        displayName: "Ngọc",
       })
-      expect(result.success).toBe(true)
-      if (result.success) {
-        expect(result.data.code).toBe("SE190299")
+      expect(invalid.success).toBe(false)
+    })
+
+    it("Chấp nhận mã mời và thông tin tham gia lớp", () => {
+      const valid = joinClassSchema.safeParse({
+        inviteCode: "K15DEMO",
+        memberCode: "SE190203",
+        displayName: "Lê Hoàng Anh",
+      })
+      expect(valid.success).toBe(true)
+    })
+  })
+
+  describe("Xác thực bộ lọc thành viên", () => {
+    it("Chấp nhận các trạng thái hợp lệ", () => {
+      const valid = listMembersQuerySchema.safeParse({
+        status: "PENDING",
+        page: "1",
+        limit: "20",
+      })
+      expect(valid.success).toBe(true)
+      if (valid.success) {
+        expect(valid.data.page).toBe(1)
+        expect(valid.data.limit).toBe(20)
       }
-    })
-
-    it("Từ chối số điện thoại không bắt đầu bằng 0 hoặc không đủ 10 chữ số", () => {
-      const invalidPhone = createMemberSchema.safeParse({
-        code: "SE190299",
-        name: "Nguyễn Văn A",
-        email: "a.nv@lopse1902.edu.vn",
-        phone: "123456789",
-      })
-      expect(invalidPhone.success).toBe(false)
     })
   })
 })

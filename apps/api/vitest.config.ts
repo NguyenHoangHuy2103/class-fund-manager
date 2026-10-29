@@ -3,6 +3,8 @@ import { defineConfig } from "vitest/config"
 export default defineConfig({
   test: {
     environment: "node",
+    include: ["tests/**/*.test.ts"],
+    exclude: ["tests/**/*.live.ts", "tests/e2e-live-neon.ts", "node_modules"],
     env: {
       NODE_ENV: "test",
       DATABASE_URL:
