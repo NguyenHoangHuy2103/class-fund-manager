@@ -64,6 +64,10 @@ Desktop.ini
 postgres-data/
 pgdata/
 
+# Local private file storage
+apps/api/storage/*
+!apps/api/storage/.gitkeep
+
 # SSL / TLS certs and private keys
 *.pem
 *.key

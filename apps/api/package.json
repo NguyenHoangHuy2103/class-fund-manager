@@ -9,6 +9,10 @@
     "start": "node dist/server.js",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
+    "test:unit": "vitest run",
+    "test:integration": "tsx tests/integration.live.ts",
+    "test:money": "tsx tests/integration.money.ts",
+    "dev:email": "tsx scripts/get-verify-token.ts",
     "db:generate": "prisma generate",
     "db:migrate": "prisma migrate dev",
     "db:deploy": "prisma migrate deploy",
@@ -26,6 +30,7 @@
     "express": "^4.21.2",
     "helmet": "^8.0.0",
     "jsonwebtoken": "^9.0.2",
+    "multer": "^2.5.0",
     "zod": "^3.24.2"
   },
   "devDependencies": {
@@ -34,6 +39,7 @@
     "@types/cors": "^2.8.17",
     "@types/express": "^4.17.21",
     "@types/jsonwebtoken": "^9.0.8",
+    "@types/multer": "^2.3.0",
     "@types/node": "^22.0.0",
     "@types/supertest": "^6.0.2",
     "prisma": "^6.4.1",
