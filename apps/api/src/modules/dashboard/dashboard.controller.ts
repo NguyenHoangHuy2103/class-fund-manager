@@ -1,22 +1,23 @@
 import type { Request, Response, NextFunction } from "express"
 import * as dashboardService from "./dashboard.service.js"
 
-export async function getDashboard(
+export async function getOverview(
   req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
-    const user = req.user!
-    const summary = await dashboardService.getDashboardSummary({
-      userId: user.userId,
-      role: user.role,
-      memberId: user.memberId,
+    const classId = req.user!.classId!
+    const overview = await dashboardService.getDashboardOverview(classId, {
+      userId: req.user!.userId,
+      classRole: req.user!.classRole,
+      memberId: req.user!.memberId,
+      globalRole: req.user!.globalRole,
     })
 
     res.status(200).json({
       ok: true,
-      data: summary,
+      data: overview,
     })
   } catch (error) {
     next(error)

@@ -1,43 +1,43 @@
 import type { Request, Response, NextFunction } from "express"
 import * as membersService from "./members.service.js"
 
-export async function getMembers(
+export async function listMembers(
   req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
-    const query = req.query as any
-    const result = await membersService.listMembers(query)
+    const classId = req.user!.classId!
+    const { search, status, page, limit } = req.query as any
+
+    const result = await membersService.listMembers({
+      classId,
+      search,
+      status,
+      page: Number(page) || 1,
+      limit: Number(limit) || 50,
+    })
+
     res.status(200).json({ ok: true, data: result })
   } catch (error) {
     next(error)
   }
 }
 
-export async function getMember(
+export async function approveMember(
   req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
-    const member = await membersService.getMemberById(req.params.id)
-    res.status(200).json({ ok: true, data: { member } })
-  } catch (error) {
-    next(error)
-  }
-}
+    const classId = req.user!.classId!
+    const memberId = req.params.id as string
+    const actorId = req.user!.userId
 
-export async function createMember(
-  req: Request,
-  res: Response,
-  next: NextFunction,
-): Promise<void> {
-  try {
-    const member = await membersService.createMember(req.body)
-    res.status(201).json({
+    const member = await membersService.approveMember(classId, memberId, actorId)
+    res.status(200).json({
       ok: true,
-      message: "Thêm thành viên mới thành công.",
+      message: "Đã phê duyệt thành viên vào lớp.",
       data: { member },
     })
   } catch (error) {
@@ -45,16 +45,20 @@ export async function createMember(
   }
 }
 
-export async function updateMember(
+export async function rejectMember(
   req: Request,
   res: Response,
   next: NextFunction,
 ): Promise<void> {
   try {
-    const member = await membersService.updateMember(req.params.id, req.body)
+    const classId = req.user!.classId!
+    const memberId = req.params.id as string
+    const actorId = req.user!.userId
+
+    const member = await membersService.rejectMember(classId, memberId, actorId)
     res.status(200).json({
       ok: true,
-      message: "Cập nhật thông tin thành viên thành công.",
+      message: "Đã từ chối yêu cầu tham gia lớp.",
       data: { member },
     })
   } catch (error) {
@@ -68,14 +72,21 @@ export async function setMemberStatus(
   next: NextFunction,
 ): Promise<void> {
   try {
+    const classId = req.user!.classId!
+    const memberId = req.params.id as string
     const { status } = req.body
-    const member = await membersService.setMemberStatus(req.params.id, status)
+    const actorId = req.user!.userId
+
+    const member = await membersService.setMemberStatus(
+      classId,
+      memberId,
+      status,
+      actorId,
+    )
+
     res.status(200).json({
       ok: true,
-      message:
-        status === "ACTIVE"
-          ? "Đã kích hoạt lại thành viên."
-          : "Đã chuyển thành viên sang ngừng hoạt động.",
+      message: `Đã cập nhật trạng thái thành viên sang ${status}.`,
       data: { member },
     })
   } catch (error) {
