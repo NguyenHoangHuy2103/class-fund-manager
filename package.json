@@ -1,0 +1,26 @@
+{
+  "name": "class-fund-manager",
+  "private": true,
+  "version": "1.0.0",
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev": "concurrently -n \"API,WEB\" -c \"blue,green\" \"npm run dev -w @class-fund/api\" \"npm run dev -w @class-fund/web\"",
+    "dev:web": "npm run dev -w @class-fund/web",
+    "dev:api": "npm run dev -w @class-fund/api",
+    "build": "npm run build -w @class-fund/api && npm run build -w @class-fund/web",
+    "typecheck": "npm run typecheck -w @class-fund/api && npm run typecheck -w @class-fund/web",
+    "lint": "oxlint apps",
+    "test": "npm run test -w @class-fund/api",
+    "db:generate": "npm run db:generate -w @class-fund/api",
+    "db:migrate": "npm run db:migrate -w @class-fund/api",
+    "db:seed": "npm run db:seed -w @class-fund/api"
+  },
+  "devDependencies": {
+    "concurrently": "^9.1.2",
+    "cross-env": "^7.0.3",
+    "oxfmt": "^0.2.0",
+    "oxlint": "^1.90.0"
+  }
+}
