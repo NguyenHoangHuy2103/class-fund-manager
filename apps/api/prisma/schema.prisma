@@ -1,0 +1,123 @@
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+enum Role {
+  ADMIN
+  MEMBER
+}
+
+enum MemberStatus {
+  ACTIVE
+  INACTIVE
+}
+
+enum CollectionStatus {
+  OPEN
+  CLOSED
+}
+
+enum TransactionType {
+  INCOME
+  EXPENSE
+}
+
+model User {
+  id           String    @id @default(cuid())
+  email        String    @unique
+  passwordHash String
+  role         Role      @default(MEMBER)
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
+
+  member            Member?
+  collections       Collection[]  @relation("CreatedCollections")
+  confirmedPayments Payment[]     @relation("ConfirmedPayments")
+  transactions      Transaction[] @relation("CreatedTransactions")
+
+  @@index([email])
+}
+
+model Member {
+  id        String       @id @default(cuid())
+  code      String       @unique
+  name      String
+  email     String       @unique
+  phone     String?
+  status    MemberStatus @default(ACTIVE)
+  userId    String?      @unique
+  user      User?        @relation(fields: [userId], references: [id], onDelete: SetNull)
+  createdAt DateTime     @default(now())
+  updatedAt DateTime     @updatedAt
+
+  payments Payment[]
+
+  @@index([status])
+  @@index([code])
+}
+
+model Collection {
+  id          String           @id @default(cuid())
+  name        String
+  description String?
+  amount      Int              // Số tiền VND (số nguyên dương)
+  dueDate     DateTime?
+  status      CollectionStatus @default(OPEN)
+  createdById String
+  createdBy   User             @relation("CreatedCollections", fields: [createdById], references: [id])
+  createdAt   DateTime         @default(now())
+  updatedAt   DateTime         @updatedAt
+
+  payments Payment[]
+
+  @@index([status])
+}
+
+model Payment {
+  id            String      @id @default(cuid())
+  collectionId  String
+  collection    Collection  @relation(fields: [collectionId], references: [id], onDelete: Restrict)
+  memberId      String
+  member        Member      @relation(fields: [memberId], references: [id], onDelete: Restrict)
+  amount        Int         // Số tiền VND (bằng số tiền đợt thu)
+  paidAt        DateTime    @default(now())
+  note          String?
+  confirmedById String
+  confirmedBy   User        @relation("ConfirmedPayments", fields: [confirmedById], references: [id])
+  transactionId String      @unique
+  transaction   Transaction @relation(fields: [transactionId], references: [id], onDelete: Restrict)
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+
+  // Chống xác nhận trùng: mỗi thành viên chỉ có 1 payment cho 1 đợt thu
+  @@unique([collectionId, memberId])
+  @@index([memberId])
+  @@index([collectionId])
+}
+
+model Transaction {
+  id           String          @id @default(cuid())
+  code         String          @unique // Ví dụ: GD-0001
+  type         TransactionType
+  category     String
+  amount       Int             // Số tiền VND dương
+  date         DateTime        // Thời điểm phát sinh giao dịch thực tế
+  description  String
+  counterparty String          // Người nộp / đơn vị nhận
+  note         String?
+  createdById  String
+  createdBy    User            @relation("CreatedTransactions", fields: [createdById], references: [id])
+  createdAt    DateTime        @default(now()) // Thời điểm tạo bản ghi hệ thống
+  updatedAt    DateTime        @updatedAt
+
+  payment Payment?
+
+  @@index([type])
+  @@index([date])
+  @@index([code])
+}
