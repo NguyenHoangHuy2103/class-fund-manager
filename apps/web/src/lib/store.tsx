@@ -5,11 +5,15 @@ import {
   useState,
   type ReactNode,
 } from "react"
-import { api, setOnUnauthorized, type UserProfile } from "./api"
+import { api, setOnUnauthorized, type UserProfile, type ClassInfo } from "./api"
 
 interface AuthContextValue {
   user: UserProfile | null
-  role: "ADMIN" | "MEMBER"
+  activeClass: ClassInfo | null
+  activeMembership: UserProfile["memberships"][0] | null
+  role: "TREASURER" | "MEMBER" | null
+  isPending: boolean
+  isRejected: boolean
   loading: boolean
   login: (email: string, password: string) => Promise<void>
   logout: () => Promise<void>
@@ -34,7 +38,6 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   }
 
   useEffect(() => {
-    // Tự động kiểm tra phiên đăng nhập qua cookie
     refreshUser()
 
     setOnUnauthorized(() => {
@@ -55,9 +58,20 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     }
   }
 
+  // Lấy membership đầu tiên của người dùng
+  const activeMembership = user?.memberships?.[0] || null
+  const activeClass = activeMembership?.class || null
+  const role = activeMembership?.role || null
+  const isPending = activeMembership?.status === "PENDING"
+  const isRejected = activeMembership?.status === "REJECTED"
+
   const value: AuthContextValue = {
     user,
-    role: user?.role || "MEMBER",
+    activeClass,
+    activeMembership,
+    role,
+    isPending,
+    isRejected,
     loading,
     login,
     logout,

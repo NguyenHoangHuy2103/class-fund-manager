@@ -1,579 +1,219 @@
-import { useEffect, useState } from "react"
-import { api, type TransactionItem } from "../lib/api"
+import { useState, useEffect } from "react"
 import {
   Badge,
-  Button,
   Card,
-  DataTable,
-  Empty,
-  Field,
   Icon,
-  Input,
-  Modal,
-  MoneyInput,
   PageHeader,
-  PageSkeleton,
-  SearchBox,
-  Select,
-  Tabs,
-  Textarea,
-  Toolbar,
-  useBusy,
-  useToast,
-  type Col,
 } from "../components/ui"
-import { fmtDate, parseMoney, todayISO, vnd } from "../lib/format"
-import { useStore } from "../lib/store"
+import { api } from "../lib/api"
 
-function ExpenseModal({
-  currentBalance,
-  onClose,
-  onSuccess,
-}: {
-  currentBalance: number
-  onClose: () => void
-  onSuccess: () => void
-}) {
-  const toast = useToast()
-  const { busy, run } = useBusy()
-  const categories = [
-    "Hoạt động",
-    "Văn phòng phẩm",
-    "Quà tặng",
-    "Cơ sở vật chất",
-    "Chi khác",
-  ]
-
-  const [category, setCategory] = useState(categories[0])
-  const [amount, setAmount] = useState("")
-  const [date, setDate] = useState(todayISO())
-  const [description, setDescription] = useState("")
-  const [counterparty, setCounterparty] = useState("")
-  const [note, setNote] = useState("")
-  const [error, setError] = useState<string | null>(null)
-
-  const handleSubmit = (e?: React.FormEvent) => {
-    if (e) e.preventDefault()
-    const parsedAmount = parseMoney(amount)
-    if (parsedAmount <= 0) return setError("Số tiền chi phải lớn hơn 0")
-    if (parsedAmount > currentBalance) {
-      return setError(
-        `Số tiền chi vượt quá số dư quỹ hiện có (${vnd(currentBalance)})`,
-      )
-    }
-    if (description.trim().length < 3)
-      return setError("Nội dung chi ít nhất 3 ký tự")
-    if (!counterparty.trim())
-      return setError("Vui lòng nhập người hoặc đơn vị nhận tiền")
-
-    setError(null)
-    run(async () => {
-      try {
-        const res = await api.transactions.createExpense({
-          category,
-          amount: parsedAmount,
-          date,
-          description: description.trim(),
-          counterparty: counterparty.trim(),
-          note: note.trim() || undefined,
-        })
-        toast("success", res.message)
-        onSuccess()
-        onClose()
-      } catch (err: any) {
-        setError(err.message || "Không thể ghi nhận khoản chi.")
-      }
-    })
-  }
-
-  return (
-    <Modal
-      title="Ghi nhận khoản chi quỹ"
-      subtitle={`Số dư quỹ hiện tại: ${vnd(currentBalance)}`}
-      onClose={onClose}
-      busy={busy}
-      footer={
-        <>
-          <Button onClick={onClose} disabled={busy}>
-            Hủy
-          </Button>
-          <Button variant="danger" loading={busy} onClick={handleSubmit}>
-            Ghi nhận khoản chi
-          </Button>
-        </>
-      }
-    >
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {error && (
-          <div
-            role="alert"
-            className="flex gap-2 rounded-xl bg-bad-bg p-3 text-sm font-medium text-bad"
-          >
-            <Icon name="alert" size={18} className="shrink-0 mt-0.5" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Số tiền chi" required>
-            {(p) => (
-              <MoneyInput
-                {...p}
-                data-autofocus
-                value={amount}
-                onChange={setAmount}
-                placeholder="50.000"
-                disabled={busy}
-              />
-            )}
-          </Field>
-
-          <Field label="Ngày phát sinh" required>
-            {(p) => (
-              <Input
-                {...p}
-                type="date"
-                max={todayISO()}
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                disabled={busy}
-              />
-            )}
-          </Field>
-        </div>
-
-        <Field label="Nội dung chi tiêu" required>
-          {(p) => (
-            <Input
-              {...p}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Ví dụ: Mua nước ngọt liên hoan, in tài liệu..."
-              disabled={busy}
-            />
-          )}
-        </Field>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Hạng mục chi" required>
-            {(p) => (
-              <Select
-                {...p}
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                disabled={busy}
-              >
-                {categories.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-
-          <Field label="Người / Đơn vị nhận tiền" required>
-            {(p) => (
-              <Input
-                {...p}
-                value={counterparty}
-                onChange={(e) => setCounterparty(e.target.value)}
-                placeholder="Ví dụ: Tiệm in Minh Tâm, Cửa hàng tiện lợi..."
-                disabled={busy}
-              />
-            )}
-          </Field>
-        </div>
-
-        <Field label="Ghi chú thêm (Không bắt buộc)">
-          {(p) => (
-            <Textarea
-              {...p}
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Chi tiết hóa đơn, người mua hộ..."
-              className="min-h-20"
-              disabled={busy}
-            />
-          )}
-        </Field>
-      </form>
-    </Modal>
-  )
-}
-
-function IncomeModal({
-  onClose,
-  onSuccess,
-}: {
-  onClose: () => void
-  onSuccess: () => void
-}) {
-  const toast = useToast()
-  const { busy, run } = useBusy()
-  const categories = ["Tài trợ", "Thu khác"]
-
-  const [category, setCategory] = useState(categories[0])
-  const [amount, setAmount] = useState("")
-  const [date, setDate] = useState(todayISO())
-  const [description, setDescription] = useState("")
-  const [counterparty, setCounterparty] = useState("")
-  const [note, setNote] = useState("")
-  const [error, setError] = useState<string | null>(null)
-
-  const handleSubmit = (e?: React.FormEvent) => {
-    if (e) e.preventDefault()
-    const parsedAmount = parseMoney(amount)
-    if (parsedAmount <= 0) return setError("Số tiền thu phải lớn hơn 0")
-    if (description.trim().length < 3)
-      return setError("Nội dung thu ít nhất 3 ký tự")
-    if (!counterparty.trim())
-      return setError("Vui lòng nhập người hoặc đơn vị nộp tiền")
-
-    setError(null)
-    run(async () => {
-      try {
-        const res = await api.transactions.createIncome({
-          category,
-          amount: parsedAmount,
-          date,
-          description: description.trim(),
-          counterparty: counterparty.trim(),
-          note: note.trim() || undefined,
-        })
-        toast("success", res.message)
-        onSuccess()
-        onClose()
-      } catch (err: any) {
-        setError(err.message || "Không thể ghi nhận khoản thu.")
-      }
-    })
-  }
-
-  return (
-    <Modal
-      title="Ghi nhận khoản thu ngoài"
-      subtitle="Khoản thu từ tài trợ, quyên góp ngoài các đợt đóng quỹ định kỳ."
-      onClose={onClose}
-      busy={busy}
-      footer={
-        <>
-          <Button onClick={onClose} disabled={busy}>
-            Hủy
-          </Button>
-          <Button variant="primary" loading={busy} onClick={handleSubmit}>
-            Ghi nhận khoản thu
-          </Button>
-        </>
-      }
-    >
-      <form onSubmit={handleSubmit} className="space-y-4">
-        {error && (
-          <div
-            role="alert"
-            className="flex gap-2 rounded-xl bg-bad-bg p-3 text-sm font-medium text-bad"
-          >
-            <Icon name="alert" size={18} className="shrink-0 mt-0.5" />
-            <span>{error}</span>
-          </div>
-        )}
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Số tiền thu" required>
-            {(p) => (
-              <MoneyInput
-                {...p}
-                data-autofocus
-                value={amount}
-                onChange={setAmount}
-                placeholder="200.000"
-                disabled={busy}
-              />
-            )}
-          </Field>
-
-          <Field label="Ngày nhận" required>
-            {(p) => (
-              <Input
-                {...p}
-                type="date"
-                max={todayISO()}
-                value={date}
-                onChange={(e) => setDate(e.target.value)}
-                disabled={busy}
-              />
-            )}
-          </Field>
-        </div>
-
-        <Field label="Nội dung khoản thu" required>
-          {(p) => (
-            <Input
-              {...p}
-              value={description}
-              onChange={(e) => setDescription(e.target.value)}
-              placeholder="Ví dụ: Tài trợ từ cựu sinh viên, giải thưởng phong trào..."
-              disabled={busy}
-            />
-          )}
-        </Field>
-
-        <div className="grid gap-4 sm:grid-cols-2">
-          <Field label="Hạng mục thu" required>
-            {(p) => (
-              <Select
-                {...p}
-                value={category}
-                onChange={(e) => setCategory(e.target.value)}
-                disabled={busy}
-              >
-                {categories.map((c) => (
-                  <option key={c} value={c}>
-                    {c}
-                  </option>
-                ))}
-              </Select>
-            )}
-          </Field>
-
-          <Field label="Người / Đơn vị nộp tiền" required>
-            {(p) => (
-              <Input
-                {...p}
-                value={counterparty}
-                onChange={(e) => setCounterparty(e.target.value)}
-                placeholder="Ví dụ: Anh Nguyễn Văn B, Đoàn trường..."
-                disabled={busy}
-              />
-            )}
-          </Field>
-        </div>
-
-        <Field label="Ghi chú thêm (Không bắt buộc)">
-          {(p) => (
-            <Textarea
-              {...p}
-              value={note}
-              onChange={(e) => setNote(e.target.value)}
-              placeholder="Thông tin thêm..."
-              className="min-h-20"
-              disabled={busy}
-            />
-          )}
-        </Field>
-      </form>
-    </Modal>
-  )
+function formatVnd(val?: string | number | bigint): string {
+  if (!val && val !== 0) return "0 đ"
+  const n = typeof val === "string" ? BigInt(val || 0) : BigInt(val)
+  return new Intl.NumberFormat("vi-VN").format(n) + " đ"
 }
 
 export default function Ledger() {
-  const { role } = useStore()
-  const [type, setType] = useState<"ALL" | "INCOME" | "EXPENSE">("ALL")
-  const [search, setSearch] = useState("")
-  const [items, setItems] = useState<TransactionItem[]>([])
-  const [summary, setSummary] = useState({
-    totalIncome: 0,
-    totalExpense: 0,
-    balance: 0,
-  })
   const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [transactions, setTransactions] = useState<any[]>([])
+  const [pagination, setPagination] = useState({ total: 0, page: 1, totalPages: 1 })
+  const [fundFilter, setFundFilter] = useState<string>("ALL")
+  const [balances, setBalances] = useState<any>(null)
 
-  const [addingExpense, setAddingExpense] = useState(false)
-  const [addingIncome, setAddingIncome] = useState(false)
-
-  const loadTransactions = async () => {
-    setLoading(true)
-    setError(null)
+  const loadData = async (page = 1, fund?: string) => {
     try {
-      const res = await api.transactions.list({ type, search })
-      setItems(res.data.items)
-      if (res.data.summary) {
-        setSummary(res.data.summary)
-      }
+      setLoading(true)
+      const [txRes, dashRes] = await Promise.all([
+        api.transactions.list({
+          page,
+          fundType: fund && fund !== "ALL" ? fund : undefined,
+          limit: 15,
+        }),
+        api.dashboard.overview(),
+      ])
+
+      setTransactions(txRes.data.items)
+      setPagination(txRes.data.pagination)
+      setBalances(dashRes.data.balances)
     } catch (err: any) {
-      setError(err.message || "Không thể tải sổ thu–chi.")
+      console.error("Lỗi tải sổ quỹ:", err)
     } finally {
       setLoading(false)
     }
   }
 
   useEffect(() => {
-    loadTransactions()
-  }, [type, search])
-
-  const cols: Col<TransactionItem>[] = [
-    {
-      key: "code",
-      header: "Mã GD",
-      cell: (t) => <span className="tnum font-bold text-ink">{t.code}</span>,
-    },
-    {
-      key: "date",
-      header: "Ngày",
-      cell: (t) => (
-        <span className="tnum text-sm text-subtle">{fmtDate(t.date)}</span>
-      ),
-    },
-    {
-      key: "description",
-      header: "Nội dung",
-      title: true,
-      cell: (t) => (
-        <div>
-          <span className="block font-semibold text-ink">{t.description}</span>
-          <span className="block text-xs text-subtle">
-            {t.category} · Đối tác: {t.counterparty}
-          </span>
-        </div>
-      ),
-    },
-    {
-      key: "type",
-      header: "Loại",
-      cell: (t) =>
-        t.type === "INCOME" ? (
-          <Badge tone="success" icon="arrowdown">
-            Thu
-          </Badge>
-        ) : (
-          <Badge tone="danger" icon="arrowup">
-            Chi
-          </Badge>
-        ),
-    },
-    {
-      key: "amount",
-      header: "Số tiền",
-      align: "right",
-      cell: (t) => (
-        <b
-          className={`tnum font-extrabold ${
-            t.type === "INCOME" ? "text-ok" : "text-bad"
-          }`}
-        >
-          {t.type === "INCOME" ? "+" : "−"}
-          {vnd(t.amount)}
-        </b>
-      ),
-    },
-  ]
+    loadData(1, fundFilter)
+  }, [fundFilter])
 
   return (
-    <>
+    <div className="space-y-6">
       <PageHeader
-        title="Sổ thu – chi"
-        desc="Toàn bộ lịch sử thu tiền và chi tiêu của quỹ lớp, công khai minh bạch cho cả lớp."
-        actions={
-          role === "ADMIN" && (
-            <div className="flex gap-2">
-              <Button icon="plus" onClick={() => setAddingIncome(true)}>
-                Ghi khoản thu
-              </Button>
-              <Button
-                variant="primary"
-                icon="plus"
-                onClick={() => setAddingExpense(true)}
-              >
-                Ghi khoản chi
-              </Button>
-            </div>
-          )
-        }
+        title="Sổ quỹ & Lịch sử dòng tiền"
+        desc="Nguồn sự thật duy nhất (Single Source of Truth) ghi nhận toàn bộ bút toán thu chi minh bạch của lớp."
       />
 
-      {/* Tóm tắt nhanh số dư quỹ */}
-      <div className="mb-6 grid gap-4 sm:grid-cols-3">
-        <Card className="p-4 sm:p-5">
-          <p className="text-xs font-semibold uppercase tracking-wider text-subtle">
-            Số dư hiện tại
-          </p>
-          <p className="tnum mt-1 text-2xl sm:text-3xl font-extrabold text-ink">
-            {vnd(summary.balance)}
-          </p>
-        </Card>
-        <Card className="p-4 sm:p-5">
-          <p className="text-xs font-semibold uppercase tracking-wider text-subtle">
-            Tổng thu
-          </p>
-          <p className="tnum mt-1 text-2xl sm:text-3xl font-extrabold text-ok">
-            +{vnd(summary.totalIncome)}
+      {/* 3 THẺ SỐ DƯ QUỸ (LEDGER SSOT) */}
+      <div className="grid gap-4 sm:grid-cols-3">
+        <Card className="p-5 border-l-4 border-l-brand">
+          <div className="flex items-center justify-between text-subtle text-xs font-semibold">
+            <span>TỔNG SỐ DƯ QUỸ</span>
+            <Icon name="wallet" size={18} className="text-brand" />
+          </div>
+          <div className="mt-2 text-2xl font-black text-ink">
+            {formatVnd(balances?.totalBalance)}
+          </div>
+          <p className="mt-1 text-xs text-subtle">
+            Tổng dòng tiền thực tế
           </p>
         </Card>
-        <Card className="p-4 sm:p-5">
-          <p className="text-xs font-semibold uppercase tracking-wider text-subtle">
-            Tổng chi
+
+        <Card className="p-5 border-l-4 border-l-emerald-500">
+          <div className="flex items-center justify-between text-subtle text-xs font-semibold">
+            <span>QUỸ TIỀN MẶT (CASH)</span>
+            <Icon name="coins" size={18} className="text-emerald-600" />
+          </div>
+          <div className="mt-2 text-2xl font-black text-emerald-700">
+            {formatVnd(balances?.cashBalance)}
+          </div>
+          <p className="mt-1 text-xs text-subtle">
+            Tiền mặt thủ quỹ đang giữ
           </p>
-          <p className="tnum mt-1 text-2xl sm:text-3xl font-extrabold text-bad">
-            −{vnd(summary.totalExpense)}
+        </Card>
+
+        <Card className="p-5 border-l-4 border-l-blue-500">
+          <div className="flex items-center justify-between text-subtle text-xs font-semibold">
+            <span>QUỸ NGÂN HÀNG (BANK)</span>
+            <Icon name="credit-card" size={18} className="text-blue-600" />
+          </div>
+          <div className="mt-2 text-2xl font-black text-blue-700">
+            {formatVnd(balances?.bankBalance)}
+          </div>
+          <p className="mt-1 text-xs text-subtle">
+            Chuyển khoản Napas247 / VietQR
           </p>
         </Card>
       </div>
 
-      <Card>
-        <Toolbar>
-          <Tabs
-            label="Loại giao dịch"
-            value={type}
-            onChange={setType}
-            items={[
-              { key: "ALL", label: "Tất cả" },
-              { key: "INCOME", label: "Tiền vào (Thu)" },
-              { key: "EXPENSE", label: "Tiền ra (Chi)" },
-            ]}
-          />
-          <SearchBox
-            value={search}
-            onChange={setSearch}
-            placeholder="Tìm theo mã GD, nội dung, người nộp/nhận..."
-            label="Tìm giao dịch"
-          />
-        </Toolbar>
+      {/* BẢNG SỔ CÁI VÀ BỘ LỌC */}
+      <Card className="p-6">
+        <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between pb-4 border-b border-border">
+          <div className="flex items-center gap-2">
+            <h3 className="font-bold text-base text-ink">Danh sách bút toán sổ cái</h3>
+            <span className="text-xs text-subtle">({pagination.total} giao dịch)</span>
+          </div>
+
+          {/* Bộ lọc kênh tiền */}
+          <div className="flex rounded-xl bg-slate-100 p-1 text-xs font-semibold">
+            <button
+              onClick={() => setFundFilter("ALL")}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                fundFilter === "ALL" ? "bg-white text-ink shadow-sm" : "text-subtle hover:text-ink"
+              }`}
+            >
+              Tất cả
+            </button>
+            <button
+              onClick={() => setFundFilter("CASH")}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                fundFilter === "CASH" ? "bg-white text-emerald-700 shadow-sm" : "text-subtle hover:text-ink"
+              }`}
+            >
+              Tiền mặt
+            </button>
+            <button
+              onClick={() => setFundFilter("BANK")}
+              className={`px-3 py-1.5 rounded-lg transition-all ${
+                fundFilter === "BANK" ? "bg-white text-blue-700 shadow-sm" : "text-subtle hover:text-ink"
+              }`}
+            >
+              Ngân hàng
+            </button>
+          </div>
+        </div>
 
         {loading ? (
-          <div className="p-8">
-            <PageSkeleton />
+          <p className="text-subtle text-sm py-8 text-center">Đang tải sổ cái...</p>
+        ) : transactions.length === 0 ? (
+          <div className="py-12 text-center">
+            <Icon name="book" size={40} className="mx-auto text-subtle mb-3" />
+            <h4 className="font-bold text-base text-ink">Chưa có giao dịch sổ cái nào</h4>
+            <p className="text-xs text-subtle mt-1">
+              Mọi khoản thu tiền mặt hoặc duyệt biên lai chuyển khoản sẽ tự động ghi sổ cái tại đây.
+            </p>
           </div>
-        ) : error ? (
-          <Empty
-            icon="alert"
-            title="Lỗi tải dữ liệu"
-            text={error}
-            action={<Button onClick={loadTransactions}>Thử lại</Button>}
-          />
-        ) : items.length === 0 ? (
-          <Empty
-            icon="book"
-            title={
-              search
-                ? "Không tìm thấy giao dịch phù hợp"
-                : "Chưa có giao dịch nào"
-            }
-            text={
-              search
-                ? "Thử tìm với từ khóa khác."
-                : "Các khoản thu chi sẽ được ghi nhận tại đây."
-            }
-          />
         ) : (
-          <DataTable cols={cols} rows={items} rowKey={(t) => t.id} />
+          <div className="overflow-x-auto">
+            <table className="w-full text-left text-sm">
+              <thead>
+                <tr className="border-b border-border text-xs uppercase text-subtle">
+                  <th className="py-2.5 px-3">Mã phiếu</th>
+                  <th className="py-2.5 px-3">Thời gian</th>
+                  <th className="py-2.5 px-3">Loại / Kênh</th>
+                  <th className="py-2.5 px-3">Người nộp / Đối tác</th>
+                  <th className="py-2.5 px-3">Diễn giải</th>
+                  <th className="py-2.5 px-3 text-right">Số tiền</th>
+                </tr>
+              </thead>
+              <tbody className="divide-y divide-border">
+                {transactions.map((tx) => {
+                  const isCash = tx.fundType === "CASH"
+
+                  return (
+                    <tr key={tx.id} className="hover:bg-slate-50/60">
+                      <td className="py-3 px-3 font-mono font-bold text-xs text-ink">
+                        {tx.code}
+                      </td>
+                      <td className="py-3 px-3 text-xs text-subtle whitespace-nowrap">
+                        {new Date(tx.date).toLocaleDateString("vi-VN")}
+                      </td>
+                      <td className="py-3 px-3 whitespace-nowrap">
+                        <Badge tone={isCash ? "success" : "info"}>
+                          {isCash ? "Tiền mặt" : "Ngân hàng"}
+                        </Badge>
+                      </td>
+                      <td className="py-3 px-3 text-xs font-semibold text-ink">
+                        {tx.counterparty || "—"}
+                      </td>
+                      <td className="py-3 px-3 text-xs text-ink max-w-xs truncate">
+                        {tx.description}
+                      </td>
+                      <td className="py-3 px-3 text-right font-extrabold text-emerald-600 whitespace-nowrap">
+                        +{formatVnd(tx.amount)}
+                      </td>
+                    </tr>
+                  )
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+
+        {/* Phân trang */}
+        {pagination.totalPages > 1 && (
+          <div className="flex items-center justify-between pt-4 border-t border-border mt-4 text-xs">
+            <span className="text-subtle">
+              Trang {pagination.page} / {pagination.totalPages}
+            </span>
+            <div className="flex gap-2">
+              <button
+                disabled={pagination.page <= 1}
+                onClick={() => loadData(pagination.page - 1, fundFilter)}
+                className="px-3 py-1.5 rounded-lg border border-border bg-white text-ink disabled:opacity-40 hover:bg-slate-50"
+              >
+                Trang trước
+              </button>
+              <button
+                disabled={pagination.page >= pagination.totalPages}
+                onClick={() => loadData(pagination.page + 1, fundFilter)}
+                className="px-3 py-1.5 rounded-lg border border-border bg-white text-ink disabled:opacity-40 hover:bg-slate-50"
+              >
+                Trang sau
+              </button>
+            </div>
+          </div>
         )}
       </Card>
-
-      {addingExpense && (
-        <ExpenseModal
-          currentBalance={summary.balance}
-          onClose={() => setAddingExpense(false)}
-          onSuccess={loadTransactions}
-        />
-      )}
-
-      {addingIncome && (
-        <IncomeModal
-          onClose={() => setAddingIncome(false)}
-          onSuccess={loadTransactions}
-        />
-      )}
-    </>
+    </div>
   )
 }
